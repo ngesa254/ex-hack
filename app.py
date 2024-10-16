@@ -1,28 +1,31 @@
-import uvicorn
+#!/usr/bin/env python3
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import numpy as np
-from joblib import load
+import joblib
+import uvicorn
 import logging
-import random
+from random import uniform
 import time
 import hashlib
 
 # Load the pre-trained SVC model
-svc_model = load("svc_model.pkl")
+try:
+    model = joblib.load("data/svc_model.pkl")
+except Exception as e:
+    logging.error(f"Error loading model: {e}")
+    raise RuntimeError("Failed to load the pre-trained model")
 
-# Create the FastAPI application instance
+# Create the FastAPI app
 app = FastAPI(
     title="Iris Classification API",
-    description="API for classifying iris flower species based on sepal and petal measurements",
-    version="1.0",
-    contact={
-        "name": "Your Name",
-        "email": "your.email@example.com",
-    },
+    description="An API for classifying iris flowers",
+    version="1.0.0",
+    contact={"name": "Your Name", "email": "your.email@example.com"},
 )
 
-# Define the Pydantic models for input data validation
+# Define Pydantic models for input validation
 class IrisFeatures(BaseModel):
     sepal_length: float
     sepal_width: float
@@ -30,96 +33,85 @@ class IrisFeatures(BaseModel):
     petal_width: float
 
 class BatchIrisFeatures(BaseModel):
-    data: list[IrisFeatures]
+    instances: list[IrisFeatures]
 
 # Generate a unique code signature
-with open("iris_app.py", "rb") as f:
-    code_signature = hashlib.sha256(f.read()).hexdigest()
+code_signature = hashlib.md5("Your unique string here".encode()).hexdigest()
 
-# API route for single prediction
+# Define API endpoints
 @app.post("/predict")
-def predict(iris_features: IrisFeatures):
+def predict(features: IrisFeatures):
     try:
-        features = np.array([
-            iris_features.sepal_length,
-            iris_features.sepal_width,
-            iris_features.petal_length,
-            iris_features.petal_width,
-        ]).reshape(1, -1)
-        prediction = svc_model.predict(features)[0]
-        species = ["setosa", "versicolor", "virginica"][prediction]
-        return {"species": species}
+        input_data = np.array([[
+            features.sepal_length,
+            features.sepal_width,
+            features.petal_length,
+            features.petal_width,
+        ]])
+        prediction = model.predict(input_data)[0]
+        return {"prediction": str(prediction), "code_signature": code_signature}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# API route for batch prediction
 @app.post("/predict_batch")
-def predict_batch(iris_batch: BatchIrisFeatures):
+def predict_batch(batch: BatchIrisFeatures):
     try:
-        predictions = []
-        for iris_features in iris_batch.data:
-            features = np.array([
-                iris_features.sepal_length,
-                iris_features.sepal_width,
-                iris_features.petal_length,
-                iris_features.petal_width,
-            ]).reshape(1, -1)
-            prediction = svc_model.predict(features)[0]
-            species = ["setosa", "versicolor", "virginica"][prediction]
-            predictions.append({"species": species})
-        return {"predictions": predictions}
+        instances = [np.array([[
+            instance.sepal_length,
+            instance.sepal_width,
+            instance.petal_length,
+            instance.petal_width,
+        ]]) for instance in batch.instances]
+        predictions = model.predict(np.concatenate(instances))
+        return {"predictions": [str(p) for p in predictions], "code_signature": code_signature}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# API route for random prediction
 @app.get("/predict_random")
 def predict_random():
     try:
-        sepal_length = random.uniform(4.3, 7.9)
-        sepal_width = random.uniform(2.0, 4.4)
-        petal_length = random.uniform(1.0, 6.9)
-        petal_width = random.uniform(0.1, 2.5)
-        features = np.array([sepal_length, sepal_width, petal_length, petal_width]).reshape(1, -1)
-        prediction = svc_model.predict(features)[0]
-        species = ["setosa", "versicolor", "virginica"][prediction]
+        features = {
+            "sepal_length": uniform(4.3, 7.9),
+            "sepal_width": uniform(2.0, 4.4),
+            "petal_length": uniform(1.0, 6.9),
+            "petal_width": uniform(0.1, 2.5),
+        }
+        input_data = np.array([[
+            features["sepal_length"],
+            features["sepal_width"],
+            features["petal_length"],
+            features["petal_width"],
+        ]])
+        prediction = model.predict(input_data)[0]
         return {
-            "sepal_length": sepal_length,
-            "sepal_width": sepal_width,
-            "petal_length": petal_length,
-            "petal_width": petal_width,
-            "species": species,
+            "features": features,
+            "prediction": str(prediction),
+            "code_signature": code_signature,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# API route for health check
 @app.get("/health")
 def health_check():
-    return f"Healthy - {code_signature}"
+    return "Healthy"
 
-# API route for model information
 @app.get("/model_info")
 def model_info():
     return {
         "model_type": "Support Vector Classifier",
         "model_version": "1.0",
-        "model_description": "Iris species classification model based on sepal and petal measurements",
+        "model_description": "A Support Vector Classifier trained on the Iris dataset for species classification.",
         "code_signature": code_signature,
     }
 
-# API route for simulating workload
-@app.post("/simulate_workload")
-def simulate_workload(request_body: dict):
+@app.get("/simulate_workload")
+def simulate_workload(seconds: int = 1):
     try:
-        delay_in_seconds = request_body.get("delay_in_seconds", 0)
-        time.sleep(delay_in_seconds)
-        return f"Workload simulated for {delay_in_seconds} seconds"
+        time.sleep(seconds)
+        return f"Workload simulated for {seconds} seconds."
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-# Start the Uvicorn server if the script is run directly
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     uvicorn.run(app, host="0.0.0.0", port=8000)
