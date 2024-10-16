@@ -1,32 +1,11 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import List, Optional
-import numpy as np
-import joblib
 import uvicorn
-import logging
-import random
-import time
-import hashlib
+from fastapi import FastAPI
+from pydantic import BaseModel
+import joblib
+import numpy as np
+from sklearn import svm
 
-# Load the model 
-try:
-    model = joblib.load('svc_model.pkl')
-except Exception as e:
-    logging.error(f"Model loading failed: {e}")
-    raise RuntimeError("Could not load the model. Ensure 'svc_model.pkl' is available.")
-
-# Create the FastAPI app
-app = FastAPI(
-    title="Iris Flower Classification API",
-    description="A simple API that classifies iris flowers based on sepal and petal measurements.",
-    version="1.0.0",
-    contact={
-        "name": "Samurai",
-    },
-)
-
-# Define the request schema
+# Data models
 class IrisFeatures(BaseModel):
     sepal_length: float
     sepal_width: float
@@ -34,141 +13,63 @@ class IrisFeatures(BaseModel):
     petal_width: float
 
 class BatchIrisFeatures(BaseModel):
-    features: List[IrisFeatures]
+    features: list[IrisFeatures]
 
-# Unique identifier for the code
-CODE_SIGNATURE = hashlib.md5("IrisAPI_v1.0.0_Hackathon".encode()).hexdigest()
+# Utility functions
+def load_model():
+    model = joblib.load("svc_model.pkl")
+    return model
 
-# Endpoint to predict iris species
-@app.post("/predict", summary="Predict Iris Species", tags=["Prediction"])
-async def predict(features: IrisFeatures):
-    try:
-        # Log incoming request
-        logging.info(f"Received request with features: {features}")
-        
-        # Prepare the data for prediction
-        input_data = np.array([[
-            features.sepal_length,
-            features.sepal_width,
-            features.petal_length,
-            features.petal_width
-        ]])
-        
-        # Perform the prediction
-        prediction = model.predict(input_data)
-        prediction_map = {0: "setosa", 1: "versicolor", 2: "virginica"}
-        
-        # Return the response with meaningful prediction
-        return {
-            "prediction": prediction_map[int(prediction[0])],
-            "code_signature": CODE_SIGNATURE
-        }
-    except Exception as e:
-        logging.error(f"Prediction failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {e}")
+def predict_species(model, features):
+    feature_array = np.array([features.sepal_length, features.sepal_width, features.petal_length, features.petal_width]).reshape(1, -1)
+    predicted_class = model.predict(feature_array)[0]
+    species_mapping = {0: "setosa", 1: "versicolor", 2: "virginica"}
+    predicted_species = species_mapping[predicted_class]
+    return predicted_species
 
-# Batch prediction endpoint
-@app.post("/predict_batch", summary="Batch Predict Iris Species", tags=["Prediction"])
-async def predict_batch(batch_features: BatchIrisFeatures):
-    try:
-        # Log incoming request
-        logging.info(f"Received batch request with {len(batch_features.features)} sets of features")
-        
-        # Prepare the data for batch prediction
-        input_data = np.array([
-            [
-                features.sepal_length,
-                features.sepal_width,
-                features.petal_length,
-                features.petal_width
-            ] for features in batch_features.features
-        ])
-        
-        # Perform the prediction
-        predictions = model.predict(input_data)
-        prediction_map = {0: "setosa", 1: "versicolor", 2: "virginica"}
-        
-        # Return the response with meaningful predictions
-        return {
-            "predictions": [prediction_map[int(pred)] for pred in predictions],
-            "code_signature": CODE_SIGNATURE
-        }
-    except Exception as e:
-        logging.error(f"Batch prediction failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Batch prediction failed: {e}")
+# FastAPI application
+app = FastAPI()
+CODE_SIGNATURE = "YOUR_UNIQUE_CODE_SIGNATURE"
+model = load_model()
 
-# Random prediction endpoint
-@app.get("/predict_random", summary="Get Random Iris Prediction", tags=["Prediction"])
-async def predict_random():
-    try:
-        # Generate random features within typical ranges for iris flowers
-        random_features = IrisFeatures(
-            sepal_length=random.uniform(4.0, 8.0),
-            sepal_width=random.uniform(2.0, 4.5),
-            petal_length=random.uniform(1.0, 7.0),
-            petal_width=random.uniform(0.1, 2.5)
-        )
-        
-        # Log generated random features
-        logging.info(f"Generated random features: {random_features}")
-        
-        # Prepare the data for prediction
-        input_data = np.array([[
-            random_features.sepal_length,
-            random_features.sepal_width,
-            random_features.petal_length,
-            random_features.petal_width
-        ]])
-        
-        # Perform the prediction
-        prediction = model.predict(input_data)
-        prediction_map = {0: "setosa", 1: "versicolor", 2: "virginica"}
-        
-        # Return the response with meaningful prediction
-        return {
-            "random_features": random_features.dict(),
-            "prediction": prediction_map[int(prediction[0])],
-            "code_signature": CODE_SIGNATURE
-        }
-    except Exception as e:
-        logging.error(f"Random prediction failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Random prediction failed: {e}")
+@app.post("/predict")
+def predict_iris_species(iris_features: IrisFeatures):
+    predicted_species = predict_species(model, iris_features)
+    return {"predicted_species": predicted_species, "code_signature": CODE_SIGNATURE}
 
-# Health check endpoint
-@app.get("/health", summary="Health Check", tags=["Health"])
-async def health_check():
-    return {"status": "Healthy", "code_signature": CODE_SIGNATURE}
+@app.post("/predict_batch")
+def predict_batch_iris_species(batch_features: BatchIrisFeatures):
+    predictions = []
+    for features in batch_features.features:
+        predicted_species = predict_species(model, features)
+        predictions.append(predicted_species)
+    return {"predicted_species": predictions, "code_signature": CODE_SIGNATURE}
 
-# Endpoint to get model information
-@app.get("/model_info", summary="Get Model Information", tags=["Info"])
-async def model_info():
-    return {
-        "model": "Support Vector Classifier (SVC)",
-        "version": "1.0",
-        "description": "A model trained on the Iris dataset to classify iris flower species.",
-        "code_signature": CODE_SIGNATURE
-    }
+@app.get("/predict_random")
+def predict_random_iris_species():
+    import random
+    sepal_length = random.uniform(4.3, 7.9)
+    sepal_width = random.uniform(2.0, 4.4)
+    petal_length = random.uniform(1.0, 6.9)
+    petal_width = random.uniform(0.1, 2.5)
+    random_features = IrisFeatures(sepal_length=sepal_length, sepal_width=sepal_width, petal_length=petal_length, petal_width=petal_width)
+    predicted_species = predict_species(model, random_features)
+    return {"predicted_species": predicted_species, "code_signature": CODE_SIGNATURE}
 
-# Endpoint to simulate workload for testing latency
-@app.get("/simulate_workload", summary="Simulate Workload", tags=["Testing"])
-async def simulate_workload(seconds: Optional[int] = 1):
-    try:
-        # Log the workload simulation request
-        logging.info(f"Simulating workload for {seconds} seconds")
-        
-        # Simulate some workload
-        time.sleep(seconds)
-        
-        # Return a success response
-        return {
-            "message": f"Successfully simulated workload for {seconds} seconds",
-            "code_signature": CODE_SIGNATURE
-        }
-    except Exception as e:
-        logging.error(f"Workload simulation failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Workload simulation failed: {e}")
+@app.get("/health")
+def health_check():
+    return {"message": "OK", "code_signature": CODE_SIGNATURE}
 
-# Run the app
+@app.get("/model_info")
+def get_model_info():
+    model_type = type(model).__name__
+    model_params = model.get_params()
+    return {"model_type": model_type, "model_params": model_params, "code_signature": CODE_SIGNATURE}
+
+@app.get("/simulate_workload")
+def simulate_workload():
+    # Implement any logic required for simulating workload or testing latency
+    return {"message": "Workload simulated", "code_signature": CODE_SIGNATURE}
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     uvicorn.run(app, host="0.0.0.0", port=8000)
